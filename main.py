@@ -1,9 +1,16 @@
 import os
 import sys
 import argparse
+import logging
 from tqdm import tqdm
 from pdf_reader import extract_text_and_metadata_from_pdf
 from text_to_speech import text_to_speech
+
+
+# Set up basic configuration for logging
+logging.basicConfig(
+    level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 
 def setup_directory(path):
@@ -14,39 +21,44 @@ def setup_directory(path):
     """
     if not os.path.exists(path):
         os.makedirs(path)
+        logging.info(f"Created directory {path}")
 
 
-def pdf_to_speech(pdf_path, output_audio_file, format='mp3', user_metadata=None):
-    """Converts a PDF file into a speech audio file."""
+def pdf_to_speech(
+    pdf_path, output_audio_file, format='mp3', user_metadata=None, language=None
+):
     text, extracted_metadata = extract_text_and_metadata_from_pdf(pdf_path)
 
-    # Prefer user-provided metadata over extracted
-    metadata = extracted_metadata
-    if user_metadata:
-        if user_metadata['title']:
-            metadata['title'] = user_metadata['title']
-        if user_metadata['author']:
-            metadata['author'] = user_metadata['author']
-
+    metadata = {**extracted_metadata, **(user_metadata or {})}
     if text:
         text_to_speech(
-            text, output_file=output_audio_file, format=format, metadata=metadata
+            text,
+            output_file=output_audio_file,
+            format=format,
+            metadata=metadata,
+            language=language,
         )
-        print(
-            f"Successfully converted {os.path.basename(pdf_path)} to speech and saved as {os.path.basename(output_audio_file)}."
+        logging.info(
+            f"Converted {os.path.basename(pdf_path)} to speech as {os.path.basename(output_audio_file)}."
         )
     else:
-        print("No text found in the PDF.")
+        logging.warning(f"No text found in {pdf_path}.")
 
 
-def process_multiple_files(files, output_dir, format='mp3', user_metadata=None):
+def process_multiple_files(
+    files, output_dir, format='mp3', user_metadata=None, language=None
+):
     for pdf_file in tqdm(files, desc="Processing PDFs", unit="file"):
         pdf_path = os.path.join('input_files', pdf_file)
         output_audio_file = os.path.join(
             output_dir, os.path.splitext(pdf_file)[0] + f'.{format}'
         )
         pdf_to_speech(
-            pdf_path, output_audio_file, format=format, user_metadata=user_metadata
+            pdf_path,
+            output_audio_file,
+            format=format,
+            user_metadata=user_metadata,
+            language=language,
         )
 
 
@@ -77,6 +89,11 @@ if __name__ == "__main__":
     parser.add_argument(
         '--author', type=str, help="Specify the author for the audio metadata."
     )
+    parser.add_argument(
+        '--language',
+        type=str,
+        help="Specify the language for text-to-speech conversion.",
+    )
 
     args = parser.parse_args()
 
@@ -85,18 +102,28 @@ if __name__ == "__main__":
     setup_directory(input_dir)
     setup_directory(output_dir)
 
-    user_metadata = {'title': args.title, 'author': args.author}
+    user_metadata = {
+        k: v for k, v in [('title', args.title), ('author', args.author)] if v
+    }
 
     if args.all:
         all_pdfs = [f for f in os.listdir(input_dir) if f.lower().endswith('.pdf')]
         process_multiple_files(
-            all_pdfs, output_dir, format=args.format, user_metadata=user_metadata
+            all_pdfs,
+            output_dir,
+            format=args.format,
+            user_metadata=user_metadata,
+            language=args.language,
         )
     elif args.pdf_files:
         process_multiple_files(
-            args.pdf_files, output_dir, format=args.format, user_metadata=user_metadata
+            args.pdf_files,
+            output_dir,
+            format=args.format,
+            user_metadata=user_metadata,
+            language=args.language,
         )
     else:
-        print(
+        logging.warning(
             "No PDF files specified. Use --all to process all PDFs in the 'input_files' directory."
         )

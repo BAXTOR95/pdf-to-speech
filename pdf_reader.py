@@ -1,5 +1,11 @@
 import os
 import PyPDF2
+import logging
+
+# Set up basic configuration for logging
+logging.basicConfig(
+    level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 
 def extract_text_and_metadata_from_pdf(pdf_path):
@@ -16,33 +22,23 @@ def extract_text_and_metadata_from_pdf(pdf_path):
     try:
         with open(pdf_path, 'rb') as file:
             reader = PyPDF2.PdfReader(file)
-
-            # Extract text
             for page in reader.pages:
-                text += page.extract_text() if page.extract_text() else ""
+                text_content = page.extract_text()
+                if text_content:
+                    text += text_content
 
-            # Extract metadata
-            if reader.metadata:
-                doc_info = reader.metadata
-                # Check different ways metadata might be stored
-                if '/Title' in doc_info and doc_info['/Title']:
-                    metadata['title'] = doc_info['/Title']
-                if '/Author' in doc_info and doc_info['/Author']:
-                    metadata['author'] = doc_info['/Author']
+            doc_info = reader.metadata or {}
+            metadata['title'] = doc_info.get(
+                '/Title', os.path.splitext(os.path.basename(pdf_path))[0]
+            )
+            metadata['author'] = doc_info.get('/Author', 'Unknown Author')
 
-                # Fallback to filename if title is not found
-                if not metadata['title']:
-                    metadata['title'] = os.path.splitext(os.path.basename(pdf_path))[0]
-
-                # Default author if not found
-                if not metadata['author']:
-                    metadata['author'] = "Unknown Author"
-            else:
-                # Default metadata if not present
-                metadata['title'] = os.path.splitext(os.path.basename(pdf_path))[0]
-                metadata['author'] = "Unknown Author"
-
-            return text, metadata
     except Exception as e:
-        print(f"Failed to read {pdf_path}: {str(e)}")
-        return "", metadata
+        logging.error(f"Failed to read {pdf_path}: {e}", exc_info=True)
+        return "", {
+            'title': os.path.splitext(os.path.basename(pdf_path))[0],
+            'author': 'Unknown Author',
+        }
+
+    logging.info(f"Extracted metadata for {pdf_path}: {metadata}")
+    return text, metadata
