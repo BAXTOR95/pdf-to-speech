@@ -1,5 +1,4 @@
 import os
-import sys
 import argparse
 import logging
 from tqdm import tqdm
@@ -25,14 +24,39 @@ def setup_directory(path):
 
 
 def pdf_to_speech(
-    pdf_path, output_audio_file, format='mp3', user_metadata=None, language=None
+    pdf_path,
+    output_dir,
+    format='mp3',
+    user_metadata=None,
+    language=None,
+    segment_by_chapter=False,
 ):
-    text, extracted_metadata = extract_text_and_metadata_from_pdf(pdf_path)
+    """Converts a PDF file to speech by extracting text and converting it to speech.
+
+    Args:
+        pdf_path (str): The path to the PDF file.
+        output_dir (str): The directory to save the output audio files.
+        format (str): The format of the output audio files (e.g., 'mp3', 'wav').
+        user_metadata (dict): Additional metadata to include in the audio files.
+        language (str): The language for text-to-speech conversion.
+        segment_by_chapter (bool): Whether to segment the text by chapters.
+
+    Returns:
+        None
+    """
+    text_segments, extracted_metadata = extract_text_and_metadata_from_pdf(
+        pdf_path, segment_by_chapter=segment_by_chapter
+    )
 
     metadata = {**extracted_metadata, **(user_metadata or {})}
-    if text:
+    base_filename = os.path.splitext(os.path.basename(pdf_path))[0]
+
+    # Decide how to name the output files based on the number of segments
+    if len(text_segments) == 1:
+        # Single segment: use the PDF base name directly
+        output_audio_file = os.path.join(output_dir, f"{base_filename}.{format}")
         text_to_speech(
-            text,
+            text_segments[0],
             output_file=output_audio_file,
             format=format,
             metadata=metadata,
@@ -42,23 +66,62 @@ def pdf_to_speech(
             f"Converted {os.path.basename(pdf_path)} to speech as {os.path.basename(output_audio_file)}."
         )
     else:
-        logging.warning(f"No text found in {pdf_path}.")
+        # Multiple segments: append segment index to the base name
+        for i, segment in enumerate(
+            tqdm(
+                text_segments, desc="Converting text segments to speech", unit="segment"
+            )
+        ):
+            output_audio_file = os.path.join(
+                output_dir, f"{base_filename}_segment_{i+1}.{format}"
+            )
+            if segment.strip():  # Ensure segment is not just whitespace
+                text_to_speech(
+                    segment,
+                    output_file=output_audio_file,
+                    format=format,
+                    metadata=metadata,
+                    language=language,
+                )
+                logging.info(
+                    f"Converted segment {i+1} of {os.path.basename(pdf_path)} to speech as {os.path.basename(output_audio_file)}."
+                )
+            else:
+                logging.warning(
+                    f"Segment {i+1} of {pdf_path} is empty and was skipped."
+                )
 
 
 def process_multiple_files(
-    files, output_dir, format='mp3', user_metadata=None, language=None
+    files,
+    output_dir,
+    format='mp3',
+    user_metadata=None,
+    language=None,
+    segment_by_chapter=False,
 ):
+    """Processes multiple PDF files to convert them to speech.
+
+    Args:
+        files (list): A list of PDF file names.
+        output_dir (str): The directory to save the output audio files.
+        format (str): The format of the output audio files (e.g., 'mp3', 'wav').
+        user_metadata (dict): Additional metadata to include in the audio files.
+        language (str): The language for text-to-speech conversion.
+        segment_by_chapter (bool): Whether to segment the text by chapters.
+
+    Returns:
+        None
+    """
     for pdf_file in tqdm(files, desc="Processing PDFs", unit="file"):
         pdf_path = os.path.join('input_files', pdf_file)
-        output_audio_file = os.path.join(
-            output_dir, os.path.splitext(pdf_file)[0] + f'.{format}'
-        )
         pdf_to_speech(
             pdf_path,
-            output_audio_file,
+            output_dir,
             format=format,
             user_metadata=user_metadata,
             language=language,
+            segment_by_chapter=segment_by_chapter,
         )
 
 
@@ -94,6 +157,11 @@ if __name__ == "__main__":
         type=str,
         help="Specify the language for text-to-speech conversion.",
     )
+    parser.add_argument(
+        '--segment-by-chapter',
+        action='store_true',
+        help="Segment the text by chapters or sections if possible.",
+    )
 
     args = parser.parse_args()
 
@@ -114,6 +182,7 @@ if __name__ == "__main__":
             format=args.format,
             user_metadata=user_metadata,
             language=args.language,
+            segment_by_chapter=args.segment_by_chapter,
         )
     elif args.pdf_files:
         process_multiple_files(
@@ -122,6 +191,7 @@ if __name__ == "__main__":
             format=args.format,
             user_metadata=user_metadata,
             language=args.language,
+            segment_by_chapter=args.segment_by_chapter,
         )
     else:
         logging.warning(
