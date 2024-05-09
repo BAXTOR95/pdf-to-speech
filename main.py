@@ -1,6 +1,7 @@
 import os
 import argparse
 import logging
+import sys
 from tqdm import tqdm
 from pdf_reader import extract_text_and_metadata_from_pdf
 from text_to_speech import text_to_speech
@@ -21,6 +22,69 @@ def setup_directory(path):
     if not os.path.exists(path):
         os.makedirs(path)
         logging.info(f"Created directory {path}")
+
+
+def select_files_interactively(input_dir):
+    """Allow users to select PDF files interactively from a given directory.
+
+    Args:
+        input_dir (str): Directory to list PDF files from.
+
+    Returns:
+        list: Selected PDF file names.
+    """
+    pdf_files = [f for f in os.listdir(input_dir) if f.lower().endswith('.pdf')]
+    for i, file in enumerate(pdf_files):
+        print(f"{i + 1}: {file}")
+
+    selections = input(
+        "Enter the numbers of the PDFs you want to process (e.g., 1 3 5): "
+    )
+    selected_indices = map(int, selections.split())
+    selected_files = [pdf_files[i - 1] for i in selected_indices]
+    return selected_files
+
+
+def save_progress(progress_file, processed_files):
+    """Saves the list of processed files to a progress file.
+
+    Args:
+        progress_file (str): The path to the progress file.
+        processed_files (list): A list of processed file names.
+    """
+    with open(progress_file, 'w') as file:
+        for item in processed_files:
+            file.write(f"{item}\n")
+
+
+def load_progress(progress_file):
+    """Loads the list of processed files from a progress file.
+
+    Args:
+        progress_file (str): The path to the progress file.
+
+    Returns:
+        list: A list of processed file names.
+    """
+    if not os.path.exists(progress_file):
+        return []
+    with open(progress_file, 'r') as file:
+        processed_files = [line.strip() for line in file.readlines()]
+    return processed_files
+
+
+def clear_progress(progress_file):
+    """Clears the progress file to reset processing state.
+
+    Args:
+        progress_file (str): The path to the progress file.
+
+    Returns:
+        None
+    """
+    if os.path.exists(progress_file):
+        os.remove(progress_file)
+        logging.info(f"Cleared progress file {progress_file}")
 
 
 def pdf_to_speech(
@@ -99,6 +163,7 @@ def process_multiple_files(
     user_metadata=None,
     language=None,
     segment_by_chapter=False,
+    progress_file='progress.txt',
 ):
     """Processes multiple PDF files to convert them to speech.
 
@@ -113,7 +178,16 @@ def process_multiple_files(
     Returns:
         None
     """
-    for pdf_file in tqdm(files, desc="Processing PDFs", unit="file"):
+    processed_files = load_progress(progress_file)
+
+    # Only process files that have not been completed yet
+    files_to_process = [f for f in files if f not in processed_files]
+
+    if not files_to_process:
+        logging.info("No new files to process. All selected files have been processed.")
+        return
+
+    for pdf_file in tqdm(files_to_process, desc="Processing PDFs", unit="file"):
         pdf_path = os.path.join('input_files', pdf_file)
         pdf_to_speech(
             pdf_path,
@@ -123,6 +197,13 @@ def process_multiple_files(
             language=language,
             segment_by_chapter=segment_by_chapter,
         )
+
+        # Save each file to progress after processing
+        processed_files.append(pdf_file)
+        save_progress(progress_file, processed_files)
+
+    # Clear the progress file after successfully processing all files
+    clear_progress(progress_file)
 
 
 # Example usage
@@ -147,6 +228,9 @@ if __name__ == "__main__":
         help="Process all PDFs in the 'input_files' directory.",
     )
     parser.add_argument(
+        '--interactive', action='store_true', help="Select PDF files interactively."
+    )
+    parser.add_argument(
         '--title', type=str, help="Specify the title for the audio metadata."
     )
     parser.add_argument(
@@ -162,6 +246,11 @@ if __name__ == "__main__":
         action='store_true',
         help="Segment the text by chapters or sections if possible.",
     )
+    parser.add_argument(
+        '--resume',
+        action='store_true',
+        help="Resume processing from the last saved progress.",
+    )
 
     args = parser.parse_args()
 
@@ -173,9 +262,34 @@ if __name__ == "__main__":
     user_metadata = {
         k: v for k, v in [('title', args.title), ('author', args.author)] if v
     }
+    progress_file = 'progress.txt'  # Define the path to the progress file
 
-    if args.all:
+    # Determine which files to process
+    if args.interactive:
+        args.pdf_files = select_files_interactively(input_dir)
+
+    if args.resume:
+        if not os.path.exists(progress_file):
+            logging.error(
+                "Progress file does not exist. Cannot resume without progress data."
+            )
+            sys.exit(1)
+        if args.all:
+            all_pdfs = [f for f in os.listdir(input_dir) if f.lower().endswith('.pdf')]
+        else:
+            # Load progress and determine unprocessed files
+            processed_pdfs = load_progress(progress_file)
+            all_pdfs = [
+                f
+                for f in os.listdir(input_dir)
+                if f.lower().endswith('.pdf') and f not in processed_pdfs
+            ]
+    elif args.all:
         all_pdfs = [f for f in os.listdir(input_dir) if f.lower().endswith('.pdf')]
+    else:
+        all_pdfs = args.pdf_files
+
+    if all_pdfs:
         process_multiple_files(
             all_pdfs,
             output_dir,
@@ -183,17 +297,9 @@ if __name__ == "__main__":
             user_metadata=user_metadata,
             language=args.language,
             segment_by_chapter=args.segment_by_chapter,
-        )
-    elif args.pdf_files:
-        process_multiple_files(
-            args.pdf_files,
-            output_dir,
-            format=args.format,
-            user_metadata=user_metadata,
-            language=args.language,
-            segment_by_chapter=args.segment_by_chapter,
+            progress_file=progress_file,
         )
     else:
         logging.warning(
-            "No PDF files specified. Use --all to process all PDFs in the 'input_files' directory."
+            "No PDF files specified. Use --all, --interactive, or list specific files to process."
         )
